@@ -1,0 +1,68 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Cada persona tiene un registro de rol en tubysol_roles/{uid} (lo crea y
+    // lo cambia solo el Administrador). Sin registro, o desactivado = sin acceso.
+    function tieneRol() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/tubysol_roles/$(request.auth.uid))
+        && get(/databases/$(database)/documents/tubysol_roles/$(request.auth.uid)).data.habilitado == true;
+    }
+    function rol() {
+      return get(/databases/$(database)/documents/tubysol_roles/$(request.auth.uid)).data.roleKey;
+    }
+    function esAdmin()   { return tieneRol() && rol() == 'admin'; }
+    function esIng()     { return tieneRol() && rol() in ['admin', 'ingenieria']; }
+    function esPlanta()  { return tieneRol() && rol() in ['admin', 'ingenieria', 'produccion']; }
+    function esCalidad() { return tieneRol() && rol() in ['admin', 'calidad']; }
+
+    // Cuentas y permisos
+    match /tubysol_roles/{uid} {
+      allow read: if request.auth != null && (request.auth.uid == uid || esAdmin());
+      allow write: if esAdmin();
+    }
+    match /tubysol_usuarios/{id} {
+      allow read, write: if esAdmin();
+    }
+    // Pedido de acceso: lo puede crear cualquiera (sin contraseña, pendiente)
+    match /tubysol_solicitudes/{id} {
+      allow create: if request.resource.data.estado == 'pendiente'
+        && request.resource.data.keys().hasOnly(['nombre', 'rol', 'subrol', 'uid', 'estado', 'creadoEn']);
+      allow read, update, delete: if esAdmin();
+    }
+
+    // Configuración
+    match /config/{docId} {
+      // El Login necesita saber qué perfiles están suspendidos antes de entrar
+      allow read: if docId == 'roles_suspendidos' || tieneRol();
+      allow write: if (docId in ['roles_suspendidos', 'calidad_logo']) ? esAdmin()
+                    : (docId == 'preformado_tipos') ? esPlanta()
+                    : esIng();
+    }
+
+    // Soldadura
+    match /soldadura_modelos/{id}        { allow read: if tieneRol(); allow write: if esIng(); }
+    match /soldadura_puestos/{id}        { allow read: if tieneRol(); allow write: if esIng(); }
+    match /soldadura_secuencia/{id}      { allow read: if tieneRol(); allow write: if esIng(); }
+    match /soldadura_visualizadores/{id} { allow read: if tieneRol(); allow write: if esAdmin(); }
+    match /soldadura_tiempos/{id}        { allow read: if tieneRol(); allow write: if esPlanta(); }
+
+    // Tuberías (Externo también puede subir fotos de piezas)
+    match /tuberia_bd/{id}      { allow read: if tieneRol(); allow write: if tieneRol() && rol() != 'calidad'; }
+    match /tuberia_tiempos/{id} { allow read: if tieneRol(); allow write: if esPlanta(); }
+
+    // Operarios (se dan de alta al medir)
+    match /tubysol_operarios/{id} { allow read: if tieneRol(); allow write: if esPlanta(); }
+
+    // Calidad
+    match /calidad_auditorias/{id}                     { allow read: if tieneRol(); allow write: if esCalidad(); }
+    match /calidad_checklist_soldadura/{id}            { allow read: if tieneRol(); allow write: if esCalidad(); }
+    match /calidad_checklist_producto_terminado/{id}   { allow read: if tieneRol(); allow write: if esCalidad(); }
+
+    // Avisos: cualquier perfil activo
+    match /avisos/{id} { allow read, write: if tieneRol(); }
+
+    // Todo lo demás, cerrado
+  }
+}
