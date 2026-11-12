@@ -68,7 +68,13 @@ zip -r "$SCRATCHPAD/TuberiasSector_SOURCE_${VER}.zip" . \
 
 ## Versión actual
 
-V315 — Tuberías: exportar "Solo promedios" (una fila por plano y máquina) + Título/Equipos completos:
+V316 — Tuberías: Título y Equipos en los exports del Resumen Tiempos (segundo intento, más robusto):
+- Reportado con el PDF de promedios (V315): "Título" y "Equipos" seguían saliendo como "-" en todas las filas. El arreglo de V315 (probar el plano como número) no alcanzó: la búsqueda `where('plano','in',[…])` seguía sin devolver datos
+- `TuberiasTiempos.jsx`: ahora los datos del catálogo se arman en dos pasos. (1) **Una sola consulta de todas las piezas PP** (`where('pieza','==','PP')`, la misma que ya usan Cobertura y el Tablero), guardada en memoria por sesión (`ppCache`); se reparte por número de plano. (2) Solo los planos que siguen sin datos se buscan puntualmente por plano (texto y número). Los errores de cada consulta no frenan el resto
+- Nuevo aviso naranja arriba de la lista cuando hay planos sin datos de catálogo ("N plano(s) no figuran en el catálogo de Tuberías…"): sirve para distinguir un plano que realmente no está en `tuberia_bd` de un problema de carga. **Si después de esta versión algún plano sigue en "-", ese plano no existe en `tuberia_bd` con ese número** (revisar el Excel de Tuberías importado)
+- No se pudo probar contra la base real (sin acceso a Firestore desde el entorno de desarrollo): solo compila y la lógica es la misma que ya usan otras pantallas
+
+### V315 — Tuberías: exportar "Solo promedios" (una fila por plano y máquina) + Título/Equipos completos:
 - Pedido con el PDF real (tiempos-tuberia 11-11-2026): el export de Resumen Tiempos repetía todas las mediciones de cada caño (10–15 filas por plano) y solo al final traía el promedio. Se necesita **una fila por caño y por máquina con el tiempo promedio de demora**, ordenado por plano; si un plano se midió en dos máquinas salen dos filas
 - `TuberiasTiempos.jsx`: nuevo selector "Exportar: Todas las mediciones / Solo promedios" sobre los botones PDF y Excel (el modo "Todas las mediciones" es el de siempre, sin cambios). Con "Solo promedios", `filasPromedio()` arma las filas y el **PDF** (`exportPDFPromedios`) trae Plano, Título, Equipos, Máquina, Med., Tiempo prom. (mm:ss:cc), Vel. prom. y Fecha (o rango de fechas si se midió en varios días); el **Excel** (`exportExcelPromedios`, hoja "Promedios") suma además "Tiempo promedio (s)" numérico y "Vel. promedio (%)" para poder analizar. Respeta el día elegido en el calendario y la pestaña de máquina activa. Archivos `tiempos-tuberia-promedios-<fecha>.pdf/.xlsx`
 - Fix: en el PDF real "Título" y "Equipos" salían como "-". Ahora el título toma el primero no vacío de la pieza y, si no hay, el código de caño (igual que Cobertura), y la búsqueda en `tuberia_bd` también prueba el plano como número por si alguna importación vieja lo guardó así (cada consulta falla en silencio sin trabar el resto). **Si siguen saliendo "-", ese plano no está en el catálogo (`tuberia_bd`) con ese número**
@@ -745,4 +751,4 @@ Nota: si se detectan más pérdidas de funcionalidad tras futuros refactors, com
 ## Convención de versiones
 
 Incrementar el número de versión (V###) en cada commit significativo.
-Siguiente versión a usar: **V316**.
+Siguiente versión a usar: **V317**.

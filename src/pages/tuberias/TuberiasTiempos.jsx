@@ -10,6 +10,9 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 
+// Piezas PP del catálogo (tuberia_bd), cargadas una sola vez por sesión
+let ppCache = null
+
 const PUESTOS = ['OMS-1', 'OMS-2', 'TJ-1', 'TJ-2', 'TJ-3', 'TJ-4', 'BLM', 'CC', 'CTDA']
 
 function toDateStr(date) {
@@ -104,26 +107,34 @@ export default function TuberiasTiempos() {
 
       if (!planos.length) return
       const info = {}
-      // El plano está guardado como texto, pero en importaciones viejas pudo quedar
-      // como número: se busca de las dos formas para que Título y Equipos no queden vacíos.
+      const agregar = item => {
+        const key = String(item.plano).trim()
+        if (!planoSet.has(key)) return
+        if (!info[key]) info[key] = []
+        const entry = { titulo: item.titulo || null, codigoCano: item.codigoCano || null, modelo: item.modelo || null, cap: item.cap || null }
+        if (!info[key].some(e => e.modelo === entry.modelo && e.cap === entry.cap)) info[key].push(entry)
+      }
+      const planoSet = new Set(planos.map(x => String(x).trim()))
+      // 1) Todas las piezas PP en una sola consulta (la misma que usan Cobertura y el
+      //    Tablero, que sabemos que anda); se guarda en memoria para no repetirla.
+      try {
+        if (!ppCache) ppCache = (await getDocs(query(collection(db, 'tuberia_bd'), where('pieza', '==', 'PP')))).docs.map(d => d.data())
+        ppCache.forEach(item => { if (item.plano != null) agregar(item) })
+      } catch { /* se prueba con la búsqueda por plano de abajo */ }
+      // 2) Los planos que siguen sin datos se buscan puntualmente (como texto y como número,
+      //    por si alguna importación vieja guardó el plano distinto).
+      const faltan = planos.filter(x => !info[String(x).trim()])
       const consultas = []
-      for (let i = 0; i < planos.length; i += 30) {
-        const chunk = planos.slice(i, i + 30)
+      for (let i = 0; i < faltan.length; i += 30) {
+        const chunk = faltan.slice(i, i + 30)
         consultas.push(chunk)
         const nums = chunk.filter(x => /^\d+$/.test(x)).map(Number)
         if (nums.length) consultas.push(nums)
       }
       for (const chunk of consultas) {
-        let s
-        try { s = await getDocs(query(collection(db, 'tuberia_bd'), where('plano', 'in', chunk))) } catch { continue }
-        s.docs.forEach(d => {
-          const item = d.data()
-          const key = String(item.plano)
-          if (!info[key]) info[key] = []
-          const entry = { titulo: item.titulo || null, codigoCano: item.codigoCano || null, modelo: item.modelo || null, cap: item.cap || null }
-          const dup = info[key].some(e => e.modelo === entry.modelo && e.cap === entry.cap)
-          if (!dup) info[key].push(entry)
-        })
+        let snapBd
+        try { snapBd = await getDocs(query(collection(db, 'tuberia_bd'), where('plano', 'in', chunk))) } catch { continue }
+        snapBd.docs.forEach(d => { const item = d.data(); if (item.plano != null) agregar(item) })
       }
       setBdInfo(info)
     }, () => {})
@@ -337,6 +348,12 @@ export default function TuberiasTiempos() {
           <button className="btn btn-primary btn-sm" onClick={exportPDF}>📄 PDF</button>
           {!isProduccion && <button className="btn btn-success btn-sm" onClick={exportExcel}>📊 Excel</button>}
         </div>
+
+        {filtered.some(r => !r.modelos.length) && (
+          <div style={{ fontSize: 11.5, color: '#b26a00', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 8, padding: '6px 10px', marginBottom: 8 }}>
+            {filtered.filter(r => !r.modelos.length).length} plano(s) no figuran en el catálogo de Tuberías (o todavía se está cargando), por eso su Título y Equipos salen vacíos en los exports.
+          </div>
+        )}
 
         {filtered.length === 0 && (
           <div className="empty"><div className="ei">📊</div><p>Sin tiempos registrados</p></div>
