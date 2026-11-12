@@ -23,7 +23,7 @@ function toDateStr(date) {
 function computeRows(tiemposAll, bdInfo, dateFilter) {
   return Object.entries(tiemposAll).map(([plano, tiempos]) => {
     const entries = bdInfo[plano] || []
-    const titulo = entries[0]?.titulo || null
+    const titulo = entries.find(e => e.titulo)?.titulo || entries.find(e => e.codigoCano)?.codigoCano || null
     const modelos = [...new Set(
       entries.map(e => [e.modelo, e.cap].filter(Boolean).join(' ')).filter(Boolean)
     )]
@@ -46,6 +46,30 @@ function computeRows(tiemposAll, bdInfo, dateFilter) {
 
 // Promedio de velocidad de un puesto — solo entre las mediciones que la
 // tienen cargada (campo nuevo, las mediciones viejas no la tienen).
+// Una fila por plano y máquina con el promedio de sus mediciones (para exportar
+// "solo promedios"). Respeta el día elegido y, si hay una pestaña de máquina
+// activa, solo esa máquina. Ordenado por plano (como el resto del resumen).
+function filasPromedio(rows, tiemposAll, dateFilter, maqFilter) {
+  const out = []
+  for (const r of rows) {
+    for (const puesto of PUESTOS) {
+      if (maqFilter && maqFilter !== 'todas' && puesto !== maqFilter) continue
+      let meds = tiemposAll[r.plano]?.[puesto]?.mediciones || []
+      if (dateFilter) meds = meds.filter(m => m.fecha && toDateStr(new Date(m.fecha)) === dateFilter)
+      if (!meds.length) continue
+      const avg = Math.round(meds.reduce((a, m) => a + m.tiempoObs, 0) / meds.length)
+      const fechas = meds.filter(m => m.fecha).map(m => new Date(m.fecha)).sort((a, b) => a - b)
+      const f = d => d.toLocaleDateString('es-AR')
+      const fecha = !fechas.length ? '-' : f(fechas[0]) === f(fechas[fechas.length - 1]) ? f(fechas[0]) : `${f(fechas[0])} – ${f(fechas[fechas.length - 1])}`
+      out.push({
+        plano: r.plano, titulo: r.titulo || '-', equipos: r.modelos.join(' / ') || '-', puesto,
+        n: meds.length, avg, vel: promVelPuesto(meds), fecha,
+      })
+    }
+  }
+  return out
+}
+
 function promVelPuesto(meds) {
   const conVel = (meds || []).filter(m => m.velocidad != null)
   if (!conVel.length) return null
@@ -66,6 +90,7 @@ export default function TuberiasTiempos() {
   const [search, setSearch] = useState('')
   const [maqFilter, setMaqFilter] = useState('todas')
   const [selectedDate, setSelectedDate] = useState(null)
+  const [soloPromedios, setSoloPromedios] = useState(false) // exportar una fila por plano y máquina con el promedio
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'tuberia_tiempos'), async snap => {
@@ -79,15 +104,23 @@ export default function TuberiasTiempos() {
 
       if (!planos.length) return
       const info = {}
+      // El plano está guardado como texto, pero en importaciones viejas pudo quedar
+      // como número: se busca de las dos formas para que Título y Equipos no queden vacíos.
+      const consultas = []
       for (let i = 0; i < planos.length; i += 30) {
         const chunk = planos.slice(i, i + 30)
-        const q = query(collection(db, 'tuberia_bd'), where('plano', 'in', chunk))
-        const s = await getDocs(q)
+        consultas.push(chunk)
+        const nums = chunk.filter(x => /^\d+$/.test(x)).map(Number)
+        if (nums.length) consultas.push(nums)
+      }
+      for (const chunk of consultas) {
+        let s
+        try { s = await getDocs(query(collection(db, 'tuberia_bd'), where('plano', 'in', chunk))) } catch { continue }
         s.docs.forEach(d => {
           const item = d.data()
           const key = String(item.plano)
           if (!info[key]) info[key] = []
-          const entry = { titulo: item.titulo || null, modelo: item.modelo || null, cap: item.cap || null }
+          const entry = { titulo: item.titulo || null, codigoCano: item.codigoCano || null, modelo: item.modelo || null, cap: item.cap || null }
           const dup = info[key].some(e => e.modelo === entry.modelo && e.cap === entry.cap)
           if (!dup) info[key].push(entry)
         })
@@ -127,7 +160,51 @@ export default function TuberiasTiempos() {
     diasDeEstePlano.forEach(ds => { countByDate[ds] = (countByDate[ds] || 0) + 1 })
   })
 
+  function exportPDFPromedios() {
+    const pdf = new jsPDF({ orientation: 'landscape' })
+    pdf.setFontSize(14)
+    pdf.text('Tiempos de Producción — Tuberías (promedio por caño y máquina)', 14, 14)
+    pdf.setFontSize(9)
+    pdf.text(`Generado: ${new Date().toLocaleString('es-AR')}${selectedDate ? ` · Día: ${selectedDate.split('-').reverse().join('/')}` : ''}${maqFilter !== 'todas' ? ` · Máquina: ${maqFilter}` : ''}`, 14, 20)
+    const filas = filasPromedio(filtered, tiemposAll, selectedDate, maqFilter)
+    autoTable(pdf, {
+      startY: 26,
+      head: [['Plano', 'Título', 'Equipos', 'Máquina', 'Med.', 'Tiempo prom.', 'Vel. prom.', 'Fecha']],
+      body: filas.map(x => [x.plano, x.titulo, x.equipos, x.puesto, x.n, fmt(x.avg), x.vel != null ? `${x.vel}%` : '-', x.fecha]),
+      styles: { fontSize: 7, cellPadding: 1.5 },
+      headStyles: { fillColor: [26, 115, 232], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 14 }, 1: { cellWidth: 55 }, 2: { cellWidth: 80 }, 3: { cellWidth: 18 },
+        4: { cellWidth: 10 }, 5: { cellWidth: 24, fontStyle: 'bold' }, 6: { cellWidth: 16 }, 7: { cellWidth: 32 },
+      },
+    })
+    const hoy = new Date()
+    const fechaStr = `${String(hoy.getDate()).padStart(2,'0')}-${String(hoy.getMonth()+1).padStart(2,'0')}-${hoy.getFullYear()}`
+    pdf.save(`tiempos-tuberia-promedios-${selectedDate || fechaStr}.pdf`)
+  }
+
+  function exportExcelPromedios() {
+    const filas = filasPromedio(filtered, tiemposAll, selectedDate, maqFilter)
+    const ws = XLSX.utils.json_to_sheet(filas.map(x => ({
+      Plano: x.plano,
+      Título: x.titulo,
+      Equipos: x.equipos,
+      Máquina: x.puesto,
+      Mediciones: x.n,
+      'Tiempo promedio': fmt(x.avg),
+      'Tiempo promedio (s)': Math.round(x.avg) / 100,
+      'Vel. promedio (%)': x.vel != null ? x.vel : '',
+      Fecha: x.fecha,
+    })))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Promedios')
+    const hoy = new Date()
+    const fechaStr = `${String(hoy.getDate()).padStart(2,'0')}-${String(hoy.getMonth()+1).padStart(2,'0')}-${hoy.getFullYear()}`
+    XLSX.writeFile(wb, `tiempos-tuberia-promedios-${selectedDate || fechaStr}.xlsx`)
+  }
+
   function exportPDF() {
+    if (soloPromedios) return exportPDFPromedios()
     const pdf = new jsPDF({ orientation: 'landscape' })
     pdf.setFontSize(14)
     pdf.text('Tiempos de Producción — Tuberías', 14, 14)
@@ -192,6 +269,7 @@ export default function TuberiasTiempos() {
   }
 
   function exportExcel() {
+    if (soloPromedios) return exportExcelPromedios()
     const ws = XLSX.utils.json_to_sheet(filtered.map(r => ({
       Plano: r.plano,
       Título: r.titulo || '-',
@@ -241,6 +319,20 @@ export default function TuberiasTiempos() {
           </div>
         )}
 
+        <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: '#555' }}>Exportar:</span>
+          {[[false, 'Todas las mediciones'], [true, 'Solo promedios']].map(([v, t]) => (
+            <button key={t} onClick={() => setSoloPromedios(v)} style={{
+              padding: '5px 12px', borderRadius: 16, border: '1.5px solid', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+              borderColor: soloPromedios === v ? '#1a73e8' : '#d0d0d0', background: soloPromedios === v ? '#1a73e8' : '#fff', color: soloPromedios === v ? '#fff' : '#333',
+            }}>{t}</button>
+          ))}
+        </div>
+        {soloPromedios && (
+          <div style={{ fontSize: 11.5, color: '#666', marginBottom: 6 }}>
+            Una fila por plano y máquina con el tiempo promedio, la velocidad promedio y la cantidad de mediciones.
+          </div>
+        )}
         <div className="actions-bar">
           <button className="btn btn-primary btn-sm" onClick={exportPDF}>📄 PDF</button>
           {!isProduccion && <button className="btn btn-success btn-sm" onClick={exportExcel}>📊 Excel</button>}

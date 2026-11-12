@@ -68,7 +68,13 @@ zip -r "$SCRATCHPAD/TuberiasSector_SOURCE_${VER}.zip" . \
 
 ## Versión actual
 
-V314 — Plan semanal y mensual + tareas de cada puesto en gráfico de cascada:
+V315 — Tuberías: exportar "Solo promedios" (una fila por plano y máquina) + Título/Equipos completos:
+- Pedido con el PDF real (tiempos-tuberia 11-11-2026): el export de Resumen Tiempos repetía todas las mediciones de cada caño (10–15 filas por plano) y solo al final traía el promedio. Se necesita **una fila por caño y por máquina con el tiempo promedio de demora**, ordenado por plano; si un plano se midió en dos máquinas salen dos filas
+- `TuberiasTiempos.jsx`: nuevo selector "Exportar: Todas las mediciones / Solo promedios" sobre los botones PDF y Excel (el modo "Todas las mediciones" es el de siempre, sin cambios). Con "Solo promedios", `filasPromedio()` arma las filas y el **PDF** (`exportPDFPromedios`) trae Plano, Título, Equipos, Máquina, Med., Tiempo prom. (mm:ss:cc), Vel. prom. y Fecha (o rango de fechas si se midió en varios días); el **Excel** (`exportExcelPromedios`, hoja "Promedios") suma además "Tiempo promedio (s)" numérico y "Vel. promedio (%)" para poder analizar. Respeta el día elegido en el calendario y la pestaña de máquina activa. Archivos `tiempos-tuberia-promedios-<fecha>.pdf/.xlsx`
+- Fix: en el PDF real "Título" y "Equipos" salían como "-". Ahora el título toma el primero no vacío de la pieza y, si no hay, el código de caño (igual que Cobertura), y la búsqueda en `tuberia_bd` también prueba el plano como número por si alguna importación vieja lo guardó así (cada consulta falla en silencio sin trabar el resto). **Si siguen saliendo "-", ese plano no está en el catálogo (`tuberia_bd`) con ese número**
+- Verificado con datos de prueba armados como el PDF (promedio, velocidad faltante, rango de fechas, filtro de día y de máquina)
+
+### V314 — Plan semanal y mensual + tareas de cada puesto en gráfico de cascada:
 - Pedido: (1) además del plan semanal, poder armar uno **mensual**; (2) en los dos, mostrar las tareas de cada puesto con un **gráfico tipo cascada, lineal** (barras horizontales)
 - `SoldaduraPlanSemanal.jsx` (título "Plan semanal y mensual", chip del Inicio "📅 Plan semanal/mensual"): selector **Semana / Mes**. En el mes se elige el mes (`mesesDe`), la tabla Puestos × días muestra **solo los días con producción** de la línea (`diasDeMes`, columna Puesto fija al desplazar) y la columna total pasa a "Mes"; tarjetas, alertas y textos dicen "del mes". Horas/eficiencia se guardan por período: `config/plan_semanal` → `{linea|lunes}` (semana) o `{linea|YYYY-MM}` (mes)
 - **Turnos por día** ahora valen por fecha para la semana y el mes: se guardan en `config/plan_semanal` → `{linea|turnos} = { 'YYYY-MM-DD': n | null }` (`null` = volver al Excel). Se siguen leyendo los turnos guardados dentro de cada semana en V312/V313 (y `guardarParam` los conserva)
@@ -739,4 +745,4 @@ Nota: si se detectan más pérdidas de funcionalidad tras futuros refactors, com
 ## Convención de versiones
 
 Incrementar el número de versión (V###) en cada commit significativo.
-Siguiente versión a usar: **V315**.
+Siguiente versión a usar: **V316**.
