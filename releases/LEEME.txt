@@ -1,0 +1,3 @@
+Carpeta releases/ — versiones ya compiladas (lo que se sube a Cloudflare).
+TubySol_V###_dist.zip = contenido de dist/ de esa versión.
+El código fuente es el resto del repositorio: npm install && npm run build genera dist/.
